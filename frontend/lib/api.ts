@@ -1095,3 +1095,39 @@ export async function fetchMaintenanceWindow(): Promise<MaintenanceWindow | null
 
 // Re-export trackEvent for convenience
 export { trackEvent };
+
+// ─── api namespace object ─────────────────────────────────────────────────────
+// Provides `import { api } from "@/lib/api"` compatibility used across components.
+
+export const api = {
+  fetchContracts,
+  fetchContract,
+  fetchContractHealth,
+  fetchContractAnalytics,
+  fetchContractVersions,
+  fetchContractAbi,
+  fetchContractChangelog,
+  fetchContractRecommendations,
+  fetchContractInteractions,
+  publishContract,
+  fetchPublisher,
+  fetchPublishers,
+  fetchPublisherContracts,
+  fetchNetworks,
+  fetchSearchSuggestions,
+  semanticSearch,
+  fetchActivityFeed,
+  fetchDependencyTree,
+  fetchMetricCatalog,
+  fetchMetricSeries,
+  generateReleaseNotes,
+  fetchReleaseNotes,
+  updateReleaseNotes,
+  publishReleaseNotes,
+  fetchDeprecationInfo,
+  setDeprecation,
+  fetchCollaborativeReview,
+  addReviewComment,
+  fetchContractExamples,
+  fetchMaintenanceWindow,
+};
