@@ -48,20 +48,28 @@ impl StateMonitorService {
 
     /// Start the monitoring background task
     pub async fn run(self: Arc<Self>) -> Result<()> {
-        info!("Starting state monitor service");
+        tracing::info!("Starting state monitor service");
         self.event_listener.run().await?;
         Ok(())
     }
 
     /// Start monitoring state changes for a specific contract
-    pub async fn start_contract_monitoring(&self, contract_id: &str, network: &str) -> Result<()> {
+    pub async fn start_contract_monitoring(
+        &self,
+        contract_id: &str,
+        network: &str,
+    ) -> Result<(), anyhow::Error> {
         self.event_listener
             .subscribe_contract(contract_id, network)
             .await
     }
 
     /// Stop monitoring a contract
-    pub async fn stop_contract_monitoring(&self, contract_id: &str, network: &str) -> Result<()> {
+    pub async fn stop_contract_monitoring(
+        &self,
+        contract_id: &str,
+        network: &str,
+    ) -> Result<(), anyhow::Error> {
         self.event_listener
             .unsubscribe_contract(contract_id, network)
     }
@@ -72,7 +80,6 @@ impl StateMonitorService {
         contract_id: &str,
         limit: i32,
     ) -> Result<Vec<StateChangeEntry>, anyhow::Error> {
-        use uuid::Uuid;
         let uuid = Uuid::parse_str(contract_id)
             .map_err(|_| anyhow::anyhow!("Invalid contract ID format"))?;
 
@@ -105,51 +112,98 @@ impl StateMonitorService {
         Ok(changes)
     }
 
-    /// Get anomalies for all contracts or a specific one
+    /// Get anomalies — optionally filtered by contract_id and/or severity
     pub async fn get_anomalies(
         &self,
         contract_id: Option<&str>,
         severity: Option<&str>,
         limit: i32,
     ) -> Result<Vec<AnomalyInfo>, anyhow::Error> {
-        use sqlx::Row;
-        use uuid::Uuid;
-
-        let mut query = String::from(
-            "SELECT id, contract_id, anomaly_type, severity, description, \
-             state_key, old_value, new_value, detected_at, is_resolved, resolution_notes, metadata \
-             FROM state_anomalies WHERE is_resolved = FALSE",
-        );
-
-        let mut bindings: Vec<sqlx::postgres::PgArguments> = Vec::new();
-
-        if let Some(cid_str) = contract_id {
-            let cid = Uuid::parse_str(cid_str)
-                .map_err(|_| anyhow::anyhow!("Invalid contract ID format"))?;
-            query.push_str(" AND contract_id = $1");
-            bindings.push(sqlx::postgres::PgArguments::new().add(cid));
-        }
-
-        if let Some(sev) = severity {
-            if !query.contains(" AND ") {
-                query.push_str(" WHERE is_resolved = FALSE AND severity = $1");
-            } else {
-                let next_idx = bindings.len() + 1;
-                query.push_str(&format!(" AND severity = ${}", next_idx));
+        // Four explicit branches avoids dynamic PgArguments accumulation,
+        // which sqlx doesn't support as a .bind() argument.
+        let anomalies = match (contract_id, severity) {
+            (Some(cid_str), Some(sev)) => {
+                let cid = Uuid::parse_str(cid_str)
+                    .map_err(|_| anyhow::anyhow!("Invalid contract ID format"))?;
+                sqlx::query_as!(
+                    AnomalyInfo,
+                    r#"
+                    SELECT id, contract_id, anomaly_type, severity, description,
+                           state_key, old_value, new_value, detected_at,
+                           is_resolved, resolution_notes, metadata
+                    FROM state_anomalies
+                    WHERE is_resolved = FALSE
+                      AND contract_id = $1
+                      AND severity = $2
+                    ORDER BY detected_at DESC
+                    LIMIT $3
+                    "#,
+                    cid,
+                    sev,
+                    limit
+                )
+                .fetch_all(&self.db)
+                .await?
             }
-            bindings.push(sqlx::postgres::PgArguments::new().add(sev));
-        }
+            (Some(cid_str), None) => {
+                let cid = Uuid::parse_str(cid_str)
+                    .map_err(|_| anyhow::anyhow!("Invalid contract ID format"))?;
+                sqlx::query_as!(
+                    AnomalyInfo,
+                    r#"
+                    SELECT id, contract_id, anomaly_type, severity, description,
+                           state_key, old_value, new_value, detected_at,
+                           is_resolved, resolution_notes, metadata
+                    FROM state_anomalies
+                    WHERE is_resolved = FALSE
+                      AND contract_id = $1
+                    ORDER BY detected_at DESC
+                    LIMIT $2
+                    "#,
+                    cid,
+                    limit
+                )
+                .fetch_all(&self.db)
+                .await?
+            }
+            (None, Some(sev)) => {
+                sqlx::query_as!(
+                    AnomalyInfo,
+                    r#"
+                    SELECT id, contract_id, anomaly_type, severity, description,
+                           state_key, old_value, new_value, detected_at,
+                           is_resolved, resolution_notes, metadata
+                    FROM state_anomalies
+                    WHERE is_resolved = FALSE
+                      AND severity = $1
+                    ORDER BY detected_at DESC
+                    LIMIT $2
+                    "#,
+                    sev,
+                    limit
+                )
+                .fetch_all(&self.db)
+                .await?
+            }
+            (None, None) => {
+                sqlx::query_as!(
+                    AnomalyInfo,
+                    r#"
+                    SELECT id, contract_id, anomaly_type, severity, description,
+                           state_key, old_value, new_value, detected_at,
+                           is_resolved, resolution_notes, metadata
+                    FROM state_anomalies
+                    WHERE is_resolved = FALSE
+                    ORDER BY detected_at DESC
+                    LIMIT $1
+                    "#,
+                    limit
+                )
+                .fetch_all(&self.db)
+                .await?
+            }
+        };
 
-        query.push_str(" ORDER BY detected_at DESC LIMIT $");
-        query.push_str(&(bindings.len() + 1).to_string());
-        bindings.push(sqlx::postgres::PgArguments::new().add(limit));
-
-        let mut sql_query = sqlx::query_as::<_, AnomalyInfo>(&query);
-        for binding in bindings {
-            sql_query = sql_query.bind(binding);
-        }
-
-        let anomalies = sql_query.fetch_all(&self.db).await?;
         Ok(anomalies)
     }
 
@@ -158,163 +212,8 @@ impl StateMonitorService {
         &self,
         anomaly_id: &str,
         resolution_notes: Option<&str>,
-    ) -> Result<()> {
-        use uuid::Uuid;
+    ) -> Result<(), anyhow::Error> {
         let uuid = Uuid::parse_str(anomaly_id)
-            .map_err(|_| anyhow::anyhow!("Invalid anomaly ID format"))?;
-
-        sqlx::query!(
-            r#"
-            UPDATE state_anomalies 
-            SET is_resolved = TRUE, 
-                resolved_at = NOW(),
-                resolution_notes = $1
-            WHERE id = $2
-            "#,
-            resolution_notes,
-            uuid
-        )
-        .execute(&self.db)
-        .await?;
-
-        Ok(())
-    }
-}
-
-impl StateMonitorService {
-    pub fn new(
-        db: PgPool,
-        event_broadcaster: broadcast::Sender<crate::state::RealtimeEvent>,
-    ) -> Result<Self, anyhow::Error> {
-        let anomaly_detector = AnomalyDetector::new(db.clone());
-        let event_listener = EventListener::new(
-            db.clone(),
-            event_broadcaster.clone(),
-            anomaly_detector.clone(),
-        )?;
-
-        Ok(Self {
-            db,
-            event_broadcaster,
-            event_listener: Arc::new(event_listener),
-            anomaly_detector: Arc::new(anomaly_detector),
-        })
-    }
-
-    /// Start monitoring state changes for a specific contract
-    pub async fn start_contract_monitoring(
-        &self,
-        contract_id: &str,
-        network: &str,
-    ) -> Result<(), anyhow::Error> {
-        self.event_listener
-            .subscribe_contract(contract_id, network)
-            .await
-    }
-
-    /// Stop monitoring a contract
-    pub async fn stop_contract_monitoring(
-        &self,
-        contract_id: &str,
-        network: &str,
-    ) -> Result<(), anyhow::Error> {
-        self.event_listener
-            .unsubscribe_contract(contract_id, network)
-    }
-
-    /// Get recent state changes for a contract
-    pub async fn get_state_history(
-        &self,
-        contract_id: &str,
-        limit: i32,
-    ) -> Result<Vec<StateChangeEntry>, anyhow::Error> {
-        let uuid = uuid::Uuid::parse_str(contract_id)
-            .map_err(|_| anyhow::anyhow!("Invalid contract ID format"))?;
-
-        let changes = sqlx::query_as!(
-            StateChangeEntry,
-            r#"
-            SELECT 
-                sh.id,
-                sh.contract_id,
-                sh.state_key,
-                sh.old_value,
-                sh.new_value,
-                sh.value_type,
-                sh.transaction_hash,
-                sh.ledger_index,
-                sh.contract_version,
-                sh.created_at,
-                sh.metadata
-            FROM contract_state_history sh
-            WHERE sh.contract_id = $1
-            ORDER BY sh.created_at DESC
-            LIMIT $2
-            "#,
-            uuid,
-            limit
-        )
-        .fetch_all(&self.db)
-        .await?;
-
-        Ok(changes)
-    }
-
-    /// Get active anomalies for a contract
-    pub async fn get_anomalies(
-        &self,
-        contract_id: Option<&str>,
-        severity: Option<&str>,
-        limit: i32,
-    ) -> Result<Vec<AnomalyInfo>, anyhow::Error> {
-        let mut query = String::from(
-            "SELECT id, contract_id, anomaly_type, severity, description, \
-             state_key, old_value, new_value, detected_at, is_resolved, resolution_notes, metadata \
-             FROM state_anomalies WHERE is_resolved = FALSE",
-        );
-
-        let mut params: Vec<uuid::Uuid> = Vec::new();
-        let mut param_index = 1;
-
-        if let Some(contract_str) = contract_id {
-            let uuid = uuid::Uuid::parse_str(contract_str)
-                .map_err(|_| anyhow::anyhow!("Invalid contract ID format"))?;
-            params.push(uuid);
-            query.push_str(&format!(" AND contract_id = ${}", param_index));
-            param_index += 1;
-        }
-
-        if let Some(sev) = severity {
-            params.push(uuid::Uuid::new_v4()); // dummy for param count
-                                               // Use text param
-            query = query.replace(
-                " AND state_key = ",
-                &format!(" AND severity = ${}", param_index),
-            );
-        }
-
-        query.push_str(" ORDER BY detected_at DESC LIMIT $");
-        query.push_str(&param_index.to_string());
-
-        if let Some(contract_uuid) = params.first() {
-            let anomalies = sqlx::query_as(&query)
-                .bind(contract_uuid)
-                .fetch_all(&self.db)
-                .await?;
-            Ok(anomalies)
-        } else {
-            let anomalies = sqlx::query_as(&query).fetch_all(&self.db).await?;
-            Ok(anomalies)
-        }
-    }
-
-    /// Resolve an anomaly
-    pub async fn resolve_anomaly(
-        &self,
-        anomaly_id: &str,
-        resolution_notes: Option<&str>,
-    ) -> Result<(), anyhow::Error> {
-        let uuid = uuid::Uuid::parse_str(anomaly_id)
             .map_err(|_| anyhow::anyhow!("Invalid anomaly ID format"))?;
 
         sqlx::query!(
@@ -338,8 +237,8 @@ impl StateMonitorService {
 // Helper models
 #[derive(sqlx::FromRow, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StateChangeEntry {
-    pub id: uuid::Uuid,
-    pub contract_id: uuid::Uuid,
+    pub id: Uuid,
+    pub contract_id: Uuid,
     pub state_key: String,
     pub old_value: Option<String>,
     pub new_value: Option<String>,
@@ -353,8 +252,8 @@ pub struct StateChangeEntry {
 
 #[derive(sqlx::FromRow, Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AnomalyInfo {
-    pub id: uuid::Uuid,
-    pub contract_id: uuid::Uuid,
+    pub id: Uuid,
+    pub contract_id: Uuid,
     pub anomaly_type: String,
     pub severity: String,
     pub description: String,

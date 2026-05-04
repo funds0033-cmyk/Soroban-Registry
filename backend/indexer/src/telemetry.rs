@@ -21,6 +21,10 @@ pub fn init_tracing(service_name: &str) {
     let service_name =
         std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| service_name.to_string());
 
+    // Clone before the move into Resource::new so we can use it again for
+    // provider.tracer(&tracer_name) without a use-after-move error.
+    let tracer_name = service_name.clone();
+
     if let Some(endpoint) = otlp_endpoint {
         let trace_config =
             opentelemetry_sdk::trace::Config::default().with_resource(Resource::new(vec![
@@ -38,7 +42,7 @@ pub fn init_tracing(service_name: &str) {
             .install_batch(opentelemetry_sdk::runtime::Tokio)
         {
             Ok(provider) => {
-                let tracer = provider.tracer(&service_name);
+                let tracer = provider.tracer(&tracer_name);
                 tracing_subscriber::registry()
                     .with(env_filter)
                     .with(fmt_layer)
