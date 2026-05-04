@@ -77,9 +77,9 @@ pub async fn get_contract_stats(
 
     // Fetch contract name for the response
     let contract_name = sqlx::query_scalar::<_, String>("SELECT name FROM contracts WHERE id = $1")
-        .fetch_optional(&state.pool)
+        .fetch_optional(&state.db)
         .await?
-        .ok_or_else(|| ApiError::not_found(&format!("Contract {} not found", contract_id)))?;
+        .ok_or_else(|| ApiError::not_found("NOT_FOUND", format!("Contract {} not found", contract_id)))?;
 
     // Query aggregated stats for the period
     let stats = sqlx::query_as::<_, ContractUsageStatsRow>(
@@ -163,9 +163,9 @@ pub async fn get_contract_stats_timeseries(
     let period_start = period_end - Duration::days(days);
 
     let contract_name = sqlx::query_scalar::<_, String>("SELECT name FROM contracts WHERE id = $1")
-        .fetch_optional(&state.pool)
+        .fetch_optional(&state.db)
         .await?
-        .ok_or_else(|| ApiError::not_found(&format!("Contract {} not found", contract_id)))?;
+        .ok_or_else(|| ApiError::not_found("NOT_FOUND", format!("Contract {} not found", contract_id)))?;
 
     let rows = sqlx::query_as::<_, TimeSeriesRow>(
         r#"
@@ -189,7 +189,7 @@ pub async fn get_contract_stats_timeseries(
     .bind(contract_id)
     .bind(period_start)
     .bind(period_end)
-    .fetch_all(&state.pool)
+    .fetch_all(&state.db)
     .await?;
 
     let series: Vec<StatsTimeSeriesPoint> = rows
@@ -262,11 +262,11 @@ pub async fn get_trending_contracts(
         column, column
     ))
     .bind(limit)
-    .fetch_all(&state.pool)
+    .fetch_all(&state.db)
     .await?;
 
     let total = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM trending_contracts_mv")
-        .fetch_one(&state.pool)
+        .fetch_one(&state.db)
         .await?;
 
     Ok(Json(TrendingContractsResponse {
