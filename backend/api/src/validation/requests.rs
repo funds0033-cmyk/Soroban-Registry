@@ -834,7 +834,6 @@ mod tests {
             publisher_address: valid_stellar_address(),
             dependencies: vec![],
             is_cicd: false,
-            ..Default::default()
         };
 
         assert!(req.validate().is_ok());
@@ -854,7 +853,6 @@ mod tests {
             publisher_address: valid_stellar_address(),
             dependencies: vec![],
             is_cicd: false,
-            ..Default::default()
         };
 
         let result = req.validate();
@@ -877,7 +875,6 @@ mod tests {
             publisher_address: valid_stellar_address(),
             dependencies: vec![],
             is_cicd: false,
-            ..Default::default()
         };
 
         let result = req.validate();
@@ -901,7 +898,6 @@ mod tests {
                 .to_string(),
             dependencies: vec![],
             is_cicd: false,
-            ..Default::default()
         };
 
         req.sanitize();

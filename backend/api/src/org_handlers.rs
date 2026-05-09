@@ -13,8 +13,8 @@ use shared::{
     CreateOrganizationRequest, InviteMemberRequest, Organization, OrganizationMember,
     OrganizationRole, UpdateOrganizationRequest,
 };
+use sqlx::postgres::PgRow;
 use sqlx::PgPool;
-use sqlx::{postgres::PgRow, Row};
 use uuid::Uuid;
 
 fn db_internal_error(operation: &str, err: sqlx::Error) -> ApiError {

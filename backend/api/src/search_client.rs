@@ -142,7 +142,7 @@ impl SearchClient {
         categories: Option<Vec<String>>,
         networks: Option<Vec<Network>>,
     ) -> Result<Value> {
-        let mut must_queries = vec![json!({
+        let must_queries = vec![json!({
             "multi_match": {
                 "query": query,
                 "fields": ["name^3", "description^1.5", "tags^2"],

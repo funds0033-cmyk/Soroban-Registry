@@ -412,7 +412,7 @@ fn query_params_to_search_params(params: ContractExportQueryParams) -> ContractS
 )]
 pub async fn import_contracts(
     State(state): State<AppState>,
-    claims: Option<AuthClaims>,
+    _claims: Option<AuthClaims>,
     ValidatedJson(req): ValidatedJson<ContractImportRequest>,
 ) -> ApiResult<Response> {
     // Validate batch size
